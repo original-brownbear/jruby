@@ -1,24 +1,35 @@
 package org.jruby.ir.instructions;
 
-import org.jruby.RubyArray;
+import java.util.Map;
 import org.jruby.ir.IRScope;
 import org.jruby.ir.Operation;
-import org.jruby.ir.operands.*;
+import org.jruby.ir.operands.Fixnum;
 import org.jruby.ir.operands.Float;
+import org.jruby.ir.operands.Operand;
+import org.jruby.ir.operands.Splat;
+import org.jruby.ir.operands.StringLiteral;
+import org.jruby.ir.operands.WrappedIRClosure;
 import org.jruby.ir.persistence.IRWriterEncoder;
 import org.jruby.ir.runtime.IRRuntimeHelpers;
 import org.jruby.ir.transformations.inlining.CloneInfo;
 import org.jruby.parser.StaticScope;
-import org.jruby.runtime.*;
+import org.jruby.runtime.Block;
+import org.jruby.runtime.CallSite;
+import org.jruby.runtime.CallType;
+import org.jruby.runtime.DynamicScope;
+import org.jruby.runtime.MethodIndex;
+import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.callsite.RefinedCachingCallSite;
 import org.jruby.util.ArraySupport;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-
-import static org.jruby.ir.IRFlags.*;
+import static org.jruby.ir.IRFlags.BINDING_HAS_ESCAPED;
+import static org.jruby.ir.IRFlags.CAN_CAPTURE_CALLERS_BINDING;
+import static org.jruby.ir.IRFlags.CAN_RECEIVE_NONLOCAL_RETURNS;
+import static org.jruby.ir.IRFlags.RECEIVES_CLOSURE_ARG;
+import static org.jruby.ir.IRFlags.REQUIRES_DYNSCOPE;
+import static org.jruby.ir.IRFlags.REQUIRES_FRAME;
+import static org.jruby.ir.IRFlags.USES_EVAL;
 
 public abstract class CallBase extends NOperandInstr implements ClosureAcceptingInstr {
     private static long callSiteCounter = 1;
@@ -26,9 +37,9 @@ public abstract class CallBase extends NOperandInstr implements ClosureAccepting
     public transient final long callSiteId;
     private final CallType callType;
     protected String name;
-    protected transient CallSite callSite;
-    protected transient int argsCount;
-    protected transient boolean hasClosure;
+    protected final transient CallSite callSite;
+    protected final transient int argsCount;
+    protected final transient boolean hasClosure;
 
     private transient boolean flagsComputed;
     private transient boolean canBeEval;
