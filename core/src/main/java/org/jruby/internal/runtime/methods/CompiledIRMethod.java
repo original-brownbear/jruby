@@ -1,12 +1,12 @@
 package org.jruby.internal.runtime.methods;
 
+import java.lang.invoke.MethodHandle;
 import org.jruby.RubyModule;
 import org.jruby.internal.runtime.AbstractIRMethod;
 import org.jruby.ir.IRMethod;
 import org.jruby.ir.IRScope;
 import org.jruby.ir.interpreter.InterpreterContext;
 import org.jruby.ir.runtime.IRRuntimeHelpers;
-import org.jruby.parser.StaticScope;
 import org.jruby.runtime.ArgumentDescriptor;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.Helpers;
@@ -14,15 +14,25 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 
-import java.lang.invoke.MethodHandle;
-
 public class CompiledIRMethod extends AbstractIRMethod {
+
+    private static final KwargsConverter KWARGS_CONVERTER_DISABLED = new KwargsConverter() {
+
+        @Override
+        public IRubyObject[] maybeFrobnicateKwargs(final ThreadContext context,
+        final IRubyObject[] args) {
+            return args;
+        }
+    };
+
     protected final MethodHandle variable;
 
     protected final MethodHandle specific;
     protected final int specificArity;
 
     private final boolean hasKwargs;
+
+    private final KwargsConverter kwargsConverter;
 
     public CompiledIRMethod(MethodHandle variable, IRScope method, Visibility visibility,
                             RubyModule implementationClass, boolean hasKwargs) {
@@ -39,7 +49,12 @@ public class CompiledIRMethod extends AbstractIRMethod {
         this.specificArity = hasKwargs ? -1 : specificArity;
         this.method.getStaticScope().determineModule();
         this.hasKwargs = hasKwargs;
-
+        if (hasKwargs) {
+            kwargsConverter =
+                new KwargsConverterEnabled(getStaticScope().getSignature().required());
+        } else {
+            kwargsConverter = KWARGS_CONVERTER_DISABLED;
+        }
         assert method.hasExplicitCallProtocol();
 
         setHandle(variable);
@@ -71,10 +86,11 @@ public class CompiledIRMethod extends AbstractIRMethod {
 
     @Override
     public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
-        if (hasKwargs) args = IRRuntimeHelpers.frobnicateKwargsArgument(context, args, getSignature().required());
-
         try {
-            return (IRubyObject) this.variable.invokeExact(context, staticScope, self, args, block, implementationClass, name);
+            return (IRubyObject) this.variable.invokeExact(
+                context, staticScope, self, kwargsConverter.maybeFrobnicateKwargs(context, args), 
+                block, implementationClass, name
+            );
         }
         catch (Throwable t) {
             Helpers.throwException(t);
@@ -136,10 +152,12 @@ public class CompiledIRMethod extends AbstractIRMethod {
 
     @Override
     public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args) {
-        if (hasKwargs) args = IRRuntimeHelpers.frobnicateKwargsArgument(context, args, getSignature().required());
 
         try {
-            return (IRubyObject) this.variable.invokeExact(context, staticScope, self, args, Block.NULL_BLOCK, implementationClass, name);
+            return (IRubyObject) this.variable.invokeExact(context, staticScope, self, 
+                kwargsConverter.maybeFrobnicateKwargs(context, args), Block.NULL_BLOCK, 
+                implementationClass, name
+            );
         }
         catch (Throwable t) {
             Helpers.throwException(t);
@@ -214,6 +232,25 @@ public class CompiledIRMethod extends AbstractIRMethod {
 
     public boolean hasKwargs() {
         return hasKwargs;
+    }
+
+    private interface KwargsConverter {
+        IRubyObject[] maybeFrobnicateKwargs(ThreadContext context, IRubyObject[] args);
+    }
+    
+    private static final class KwargsConverterEnabled implements KwargsConverter {
+
+        private final int required;
+        
+        KwargsConverterEnabled(final int required) {
+            this.required = required;
+        }
+        
+        @Override
+        public IRubyObject[] maybeFrobnicateKwargs(final ThreadContext context,
+            final IRubyObject[] args) {
+            return IRRuntimeHelpers.frobnicateKwargsArgument(context, args, required);
+        }
     }
 
 }
